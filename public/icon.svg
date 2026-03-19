@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" fill="none">
+  <rect width="192" height="192" rx="40" fill="#0c140b"/>
+  <!-- Flask body -->
+  <path d="M76 52 L76 100 L52 148 Q48 156 56 160 L136 160 Q144 156 140 148 L116 100 L116 52 Z" fill="#1c2a18" stroke="#7ab860" stroke-width="4"/>
+  <!-- Flask neck -->
+  <rect x="72" y="44" width="48" height="12" rx="4" fill="#7ab860"/>
+  <!-- Liquid fill inside flask -->
+  <path d="M59 132 L133 132 L140 148 Q144 156 136 160 L56 160 Q48 156 52 148 Z" fill="#7ab860" opacity="0.6"/>
+  <!-- Flame -->
+  <path d="M96 108 C88 100 84 116 92 120 C86 112 100 104 96 108 Z" fill="#7ab860"/>
+  <path d="M96 108 C104 100 108 116 100 120 C106 112 92 104 96 108 Z" fill="#a0c090"/>
+</svg>
