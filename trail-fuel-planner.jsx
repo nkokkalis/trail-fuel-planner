@@ -311,7 +311,9 @@ const BASE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Instrument+Serif&family=DM+Sans:wght@400;500;600&display=swap');
   *, *::before, *::after { box-sizing: border-box; }
   body { margin: 0; }
-  input[type=number]::-webkit-inner-spin-button { opacity: 1; }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
   ::selection { background: var(--selection-bg); color: var(--text); }
   input:focus, select:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 2px var(--focus-ring); outline: none; }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
