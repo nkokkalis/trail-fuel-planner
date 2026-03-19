@@ -892,7 +892,7 @@ export default function FuelPlanner() {
 
         {/* ── Tabs ── */}
         <div style={{ display: "flex", gap: 2, marginBottom: 14, background: "var(--tab-bar)", borderRadius: 10, padding: "3px" }}>
-          {[{ id: "plan", label: "Protocol" }, { id: "calc", label: "Calculations" }].map(t => (
+          {[{ id: "plan", label: "Protocol" }, { id: "calc", label: "Calculations" }, { id: "refs", label: "References" }].map(t => (
             <button
               key={t.id}
               onClick={() => setActiveTab(t.id)}
@@ -1106,6 +1106,114 @@ export default function FuelPlanner() {
                 ].map((c, i) => <div key={i}>· {c}</div>)}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ── References Tab ── */}
+        {activeTab === "refs" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {[
+              {
+                section: "Energy Expenditure",
+                refs: [
+                  {
+                    cite: "Margaria R, Cerretelli P, Aghemo P, Sassi G (1963). Energy cost of running. J Appl Physiol 18(2):367–370.",
+                    use: "Baseline: 1 kcal/kg/km for flat running. Calibration anchor for the Minetti ratio method.",
+                  },
+                  {
+                    cite: "Minetti AE, Moia C, Roi GS, Susta D, Ferretti G (2002). Energy cost of walking and running at extreme uphill and downhill slopes. J Appl Physiol 93(3):1039–1046.",
+                    use: "Polynomial EC(g) = 155.4g⁵ − 30.4g⁴ − 43.3g³ + 46.3g² + 19.5g + 3.6 (J/kg/m horizontal). Used to scale energy cost by slope grade.",
+                  },
+                  {
+                    cite: "di Prampero PE (1986). The energy cost of human locomotion on land and in water. Int J Sports Med 7(2):55–72.",
+                    use: "Confirms Margaria's flat-running economy value (~1 kcal/kg/km).",
+                  },
+                ],
+              },
+              {
+                section: "Carbohydrate Intake",
+                refs: [
+                  {
+                    cite: "Jeukendrup AE (2011). Nutrition for endurance sports: marathon, triathlon, and road cycling. J Sports Sci 29(S1):S91–99.",
+                    use: "CHO intake tiers by duration: <1h optional, 1–2h 30–60 g/h, 2–3h 60–80 g/h.",
+                  },
+                  {
+                    cite: "Jeukendrup AE (2014). A step towards personalized sports nutrition: carbohydrate intake during exercise. Sports Med 44(S1):25–33.",
+                    use: "Updates the 80–90 g/h tier threshold to events >2.5h (from >3h). Multiple-transport CHO (glucose:fructose ≈ 2:1) required for absorption >60 g/h.",
+                  },
+                  {
+                    cite: "Thomas DT, Erdman KA, Burke LM (2016). Position of the Academy of Nutrition and Dietetics, Dietitians of Canada, and the American College of Sports Medicine: Nutrition and Athletic Performance. Med Sci Sports Exerc 48(3):543–568.",
+                    use: "ACSM/AND/DC position stand on CHO, protein, fluid, and caffeine for athletes. General framework for targets.",
+                  },
+                ],
+              },
+              {
+                section: "Hydration & Sodium",
+                refs: [
+                  {
+                    cite: "Sawka MN, Burke LM, Eichner ER, Maughan RJ, Montain SJ, Stachenfeld NS (2007). American College of Sports Medicine position stand: Exercise and fluid replacement. Med Sci Sports Exerc 39(2):377–390.",
+                    use: "Sweat rate reference (~600 ml/h at thermoneutral) and fluid replacement guidelines. Basis for the temperature-scaling model.",
+                  },
+                  {
+                    cite: "Lara B, Gallo-Salazar C, Puente C, Arán-Fillat T, Salinero JJ, Del Coso J (2017). Interindividual variability in sweat electrolyte concentration in marathoners. J Int Soc Sports Nutr 14:1.",
+                    use: "Sweat sodium concentration: population mean ~800 mg/L, range 200–2000 mg/L. Used for sodium loss estimate.",
+                  },
+                ],
+              },
+              {
+                section: "Caffeine",
+                refs: [
+                  {
+                    cite: "Grgic J, Grgic I, Pickering C, Schoenfeld BJ, Bishop DJ, Pedisic Z (2021). Wake up and smell the coffee: caffeine supplementation and exercise performance — an umbrella review of 21 published meta-analyses. Br J Sports Med 55(15):929–936.",
+                    use: "3–6 mg/kg effective dose range. Timing (45–60 min pre-exercise) and in-race split strategy for ultras.",
+                  },
+                ],
+              },
+              {
+                section: "Ultra-Endurance: Fat Oxidation",
+                refs: [
+                  {
+                    cite: "Brooks GA, Mercier J (1994). Balance of carbohydrate and lipid utilization during exercise: the \"crossover\" concept. J Appl Physiol 76(6):2253–2261.",
+                    use: "Fat oxidation fraction increases with duration and decreases with intensity. Basis for the duration-scaling fat estimate (30% at 5h → 55% at 15h+).",
+                  },
+                  {
+                    cite: "Volek JS, Freidenreich DJ, Saenz C, et al. (2016). Metabolic characteristics of keto-adapted ultra-endurance runners. Metabolism 65(3):100–110.",
+                    use: "Context for elevated fat oxidation in adapted ultra athletes. Reinforces that fat contribution is meaningful in multi-hour events.",
+                  },
+                ],
+              },
+              {
+                section: "Ultra-Endurance: Protein",
+                refs: [
+                  {
+                    cite: "Tarnopolsky MA (2004). Protein requirements for endurance athletes. Nutrition 20(7–8):662–668.",
+                    use: "Protein needs in prolonged endurance: 0.25 g/kg/h during events, higher for multi-day. Basis for the 0.25 g/kg/h target for <8h ultras.",
+                  },
+                  {
+                    cite: "Keinänen OA, Tiilikainen E, Tanskanen M, et al. (2022). Nutritional strategies of recreational ultra-marathon runners: findings from a systematic review. Nutrients 14(12):2405.",
+                    use: "Reviews protein intake practices in ultra-marathons. Supports 0.30 g/kg/h for events >8h to counter catabolism and support recovery.",
+                  },
+                ],
+              },
+            ].map(({ section, refs }) => (
+              <div key={section} style={{ background: "var(--card-bg)", border: "1px solid var(--card-border)", borderRadius: 12, padding: "18px 20px" }}>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-muted)", marginBottom: 14 }}>
+                  {section}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  {refs.map((r, i) => (
+                    <div key={i} style={{ borderLeft: "2px solid var(--accent-dim)", paddingLeft: 14 }}>
+                      <div style={{ fontFamily: "monospace", fontSize: 12, color: "var(--text)", lineHeight: 1.6, marginBottom: 5 }}>
+                        {r.cite}
+                      </div>
+                      <div style={{ fontFamily: "monospace", fontSize: 11, color: "var(--text-dim)", lineHeight: 1.55 }}>
+                        <span style={{ color: "var(--text-muted)" }}>Used for: </span>{r.use}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
