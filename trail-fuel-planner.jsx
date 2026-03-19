@@ -450,15 +450,30 @@ export default function TrailFuelPlanner() {
 
   // ── Weather handler ──
   const fetchWeatherAt = async (lat, lon) => {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-      `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m` +
-      `&wind_speed_unit=kmh&timezone=auto&start_date=${raceDate}&end_date=${raceDate}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error();
-    const data = await res.json();
+    const [weatherRes, geoRes] = await Promise.all([
+      fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+        `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m` +
+        `&wind_speed_unit=kmh&timezone=auto&start_date=${raceDate}&end_date=${raceDate}`
+      ),
+      fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
+        { headers: { "Accept-Language": "en" } }
+      ),
+    ]);
+
+    if (!weatherRes.ok) throw new Error();
+    const data = await weatherRes.json();
     const h = data.hourly;
     const i = raceHour;
-    const loc = (data.timezone?.split("/").pop() ?? "race location").replace(/_/g, " ");
+
+    let loc = "race location";
+    if (geoRes.ok) {
+      const geo = await geoRes.json();
+      const a = geo.address ?? {};
+      loc = a.city ?? a.town ?? a.village ?? a.municipality ?? a.county ?? loc;
+    }
+
     return {
       temp: Math.round(h.temperature_2m[i]),
       feelsLike: Math.round(h.apparent_temperature[i]),
