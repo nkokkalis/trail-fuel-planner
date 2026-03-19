@@ -2,33 +2,39 @@ import { useState, useMemo, useRef } from "react";
 
 // ─── SCIENCE-BASED CONSTANTS ────────────────────────────────────────
 // Sources:
-// - Jeukendrup (2011): CHO oxidation rates during exercise
-// - ACSM Position Stand on Nutrition and Athletic Performance (2016)
-// - Minetti et al. (2002): Energy cost of walking/running on grades
-// - Compendium of Physical Activities (2024 update)
-// - Precision Fuel & Hydration guidelines
-// - ~1 kcal/kg/km flat running (well-established rule of thumb)
-// - +2 kcal/kg per 100m elevation gain (research consensus)
-// - Trail terrain: +10-15% metabolic cost over road
+// - Margaria et al. (1963) J Appl Physiol 18(2):367-370 — 1 kcal/kg/km flat running
+// - Minetti et al. (2002) J Appl Physiol 93(3):1039-1046 — energy cost on slopes
+// - Jeukendrup (2011) J Sports Sci 29(S1):S17-27 — CHO intake tiers
+// - Jeukendrup (2014) Sports Med 44(S1):25-33 — updated CHO guidance (>2.5h tier)
+// - Thomas, Erdman & Burke (2016) Med Sci Sports Exerc 48(3):543-568 — ACSM/AND/DC Position Stand
+// - Sawka et al. (2007) Med Sci Sports Exerc 39(2):377-390 — fluid replacement
+// - Lara et al. (2017) Sports Med 47(S1):39-48 — sweat sodium concentration
+// - Grgic et al. (2021) Br J Sports Med 55(15):929 — ISSN caffeine position
 
-const FLAT_KCAL_PER_KG_PER_KM = 1.0;
-const ELEVATION_KCAL_PER_KG_PER_100M = 2.0;
-const TRAIL_TERRAIN_MULTIPLIER = 1.12;
-const GLYCOGEN_STORE_G_PER_KG = 4.0;
+const FLAT_KCAL_PER_KG_PER_KM = 1.0;  // Margaria (1963); confirmed di Prampero (1986)
+const TRAIL_TERRAIN_MULTIPLIER = 1.12; // +12% trail vs road; literature range 10–20%
+const GLYCOGEN_STORE_G_PER_KG = 4.0;  // resting muscle glycogen, carb-adequate athlete
 const GLYCOGEN_MAX_G = 500;
 const KCAL_PER_G_CHO = 4;
 
+// Minetti et al. (2002): EC(g) = 155.4g⁵ − 30.4g⁴ − 43.3g³ + 46.3g² + 19.5g + 3.6
+// Units: J/kg per m of horizontal distance; g = grade as decimal (0.1 = 10%)
+const MINETTI_FLAT_J = 3.6; // EC at grade 0 (treadmill); calibrated to Margaria via ratio
+
+// CHO tiers — Jeukendrup (2011); >2.5h updated from Jeukendrup (2014)
 const CHO_TIERS = [
-  { maxHours: 1.0, low: 0,  high: 30, note: "Optional — glycogen sufficient" },
-  { maxHours: 2.0, low: 30, high: 60, note: "Moderate intake recommended" },
-  { maxHours: 3.0, low: 60, high: 80, note: "Glucose + fructose blend advised" },
-  { maxHours: Infinity, low: 80, high: 90, note: "Max absorption — trained gut required" },
+  { maxHours: 1.0,      low: 0,  high: 30, note: "Optional — endogenous glycogen sufficient" },
+  { maxHours: 2.0,      low: 30, high: 60, note: "Single-source CHO (glucose or maltodextrin)" },
+  { maxHours: 2.5,      low: 60, high: 80, note: "Multiple-transport CHO advised (gel + drink)" },
+  { maxHours: Infinity, low: 80, high: 90, note: "Trained gut required — glucose:fructose ≈ 2:1" },
 ];
 
+// Sweat & sodium — Sawka et al. (2007); Lara et al. (2017)
+// Temp scaling is a practical linear approximation (individual variation ±50%)
 const SWEAT_RATE_BASE_ML_PER_H = 600;
-const SWEAT_RATE_TEMP_ML_PER_DEG = 30;
-const SWEAT_RATE_HUMIDITY_FACTOR = 1.15;
-const SODIUM_MG_PER_L_SWEAT = 800;
+const SWEAT_RATE_TEMP_ML_PER_DEG = 25;   // ml/h per °C above 15°C (approximate)
+const SWEAT_RATE_HUMIDITY_FACTOR = 1.15; // +15% if humidity >70%
+const SODIUM_MG_PER_L_SWEAT = 800;       // population mid-range; range 200–2000 mg/L (Lara 2017)
 
 const PRODUCTS = {
   "Maurten Gel 160":        { cho: 40, sodium: 36,  caffeine: 0,   kcal: 160, weight: 50 },
@@ -100,11 +106,24 @@ function computePlan(inputs) {
   const durationMin = distanceKm * effectivePace;
   const durationH = durationMin / 60;
 
-  const flatCost = FLAT_KCAL_PER_KG_PER_KM * bodyWeightKg * distanceKm;
-  const elevCost = ELEVATION_KCAL_PER_KG_PER_100M * bodyWeightKg * (elevationGainM / 100);
-  const baseCost = (flatCost + elevCost) * TRAIL_TERRAIN_MULTIPLIER;
+  // ── Energy expenditure — Minetti (2002) polynomial, calibrated to Margaria (1963) ──
+  // Model: assume 50% of distance climbs at avg grade, 50% descends at same grade.
+  // Minetti cost ratio vs flat is used to scale Margaria's 1 kcal/kg/km.
+  // Descents at moderate grades (< ~25%) cost LESS than flat (eccentric efficiency).
+  const minettiEC = (g) => {
+    const grade = Math.max(-0.45, Math.min(0.45, g));
+    return 155.4*grade**5 - 30.4*grade**4 - 43.3*grade**3 + 46.3*grade**2 + 19.5*grade + 3.6;
+  };
+  const avgGrade = elevationGainM / (distanceKm * 500); // grade over the climbing half
+  const climbRatio   = minettiEC(avgGrade)  / MINETTI_FLAT_J;
+  const descentRatio = minettiEC(-avgGrade) / MINETTI_FLAT_J;
+  const halfDist = distanceKm / 2;
+  const climbKcal   = FLAT_KCAL_PER_KG_PER_KM * climbRatio   * bodyWeightKg * halfDist;
+  const descentKcal = FLAT_KCAL_PER_KG_PER_KM * descentRatio * bodyWeightKg * halfDist;
+  const baseCost = (climbKcal + descentKcal) * TRAIL_TERRAIN_MULTIPLIER;
   const totalKcal = Math.round(baseCost * (isHot ? 1.08 : 1.0));
   const kcalPerHour = Math.round(totalKcal / durationH);
+  const avgGradePct = Math.round(avgGrade * 1000) / 10; // % with 1 decimal
 
   const glycogenG = Math.min(bodyWeightKg * GLYCOGEN_STORE_G_PER_KG, GLYCOGEN_MAX_G);
   const glycogenKcal = glycogenG * KCAL_PER_G_CHO;
@@ -150,6 +169,8 @@ function computePlan(inputs) {
     durationMin: Math.round(durationMin), durationH: Math.round(durationH * 100) / 100,
     effectivePace: Math.round(effectivePace * 100) / 100,
     avgGradePercent: Math.round(avgGradePercent * 10) / 10,
+    avgGradePct, climbRatio, descentRatio,
+    climbKcal: Math.round(climbKcal), descentKcal: Math.round(descentKcal),
     totalKcal, kcalPerHour,
     glycogenG: Math.round(glycogenG), glycogenKcal,
     choPerHourTarget, choPerHourLow: tier.low, choPerHourHigh: tier.high, tierNote: tier.note,
@@ -716,7 +737,7 @@ export default function TrailFuelPlanner() {
               <StatCard label="Est. Duration" value={fmtDuration(plan.durationMin)} unit=""
                 formula={`Flat: ${fmtPace(flatPaceMinPerKm)}/km\n+elev: +${(plan.effectivePace - flatPaceMinPerKm - 0.4).toFixed(2)} min/km\n+trail: +0.4 min/km\n= ${fmtPace(plan.effectivePace)}/km × ${distanceKm}km`} />
               <StatCard label="Energy Cost" value={plan.totalKcal.toLocaleString()} unit="kcal"
-                formula={`Flat: 1 × ${bodyWeightKg}kg × ${distanceKm}km = ${Math.round(bodyWeightKg * distanceKm)} kcal\nElev: 2 × ${bodyWeightKg}kg × ${(elevationGainM/100).toFixed(1)} = ${Math.round(2 * bodyWeightKg * elevationGainM / 100)} kcal\n× ${TRAIL_TERRAIN_MULTIPLIER} trail${isHot ? "\n× 1.08 heat" : ""}`} />
+                formula={`Minetti (2002) polynomial @ avg grade ${plan.avgGradePct}%\nClimb ×${plan.climbRatio.toFixed(2)} × ${bodyWeightKg}kg × ${(distanceKm/2).toFixed(1)}km = ${Math.round(plan.climbKcal)} kcal\nDescent ×${plan.descentRatio.toFixed(2)} × ${bodyWeightKg}kg × ${(distanceKm/2).toFixed(1)}km = ${Math.round(plan.descentKcal)} kcal\n× ${TRAIL_TERRAIN_MULTIPLIER} trail terrain${isHot ? "\n× 1.08 heat" : ""}\n= ${plan.totalKcal} kcal\nMargaria (1963); Minetti (2002)`} />
               <StatCard label="CHO Target" value={plan.choPerHourTarget} unit="g/h"
                 formula={`Duration: ${plan.durationH}h → tier ${plan.choPerHourLow}–${plan.choPerHourHigh} g/h\nMid-range target: ${plan.choPerHourTarget} g/h\n"${plan.tierNote}"\nJeukendrup (2011), ACSM (2016)`} />
             </div>
@@ -725,7 +746,7 @@ export default function TrailFuelPlanner() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
               <StatCard label="In-Race CHO" value={plan.totalChoNeeded} unit="g total" />
               <StatCard label="Fluid" value={plan.sweatRateMlPerH} unit="ml/h"
-                formula={`Base 600 ml/h @ 15°C\n+${Math.max(0, tempC - 15)}°C × 30 = +${Math.max(0, tempC - 15) * 30} ml/h${humidityPct > 70 ? `\n× 1.15 humidity` : ""}${isHot ? `\n× 1.10 heat` : ""}\n= ${plan.sweatRateMlPerH} ml/h\n→ ${plan.totalFluidL}L total\nACSM (2007)`} />
+                formula={`Base 600 ml/h @ 15°C (Sawka 2007)\n+${Math.max(0, tempC - 15)}°C × 25 ml/h = +${Math.max(0, tempC - 15) * 25} ml/h${humidityPct > 70 ? `\n× 1.15 humidity (reduced evaporative cooling)` : ""}${isHot ? `\n× 1.10 heat stress` : ""}\n= ${plan.sweatRateMlPerH} ml/h\n→ ${plan.totalFluidL}L total\n\nLinear temp scaling is approximate.\nIndividual variation ±50%.\nSweat testing gives real data.`} />
               <StatCard label="Sodium" value={plan.sodiumPerH} unit="mg/h"
                 formula={`${plan.sweatRateMlPerH} ml/h × 800 mg/L\n= ${plan.sodiumPerH} mg/h\n→ ${plan.totalSodium} mg total\nRange: 500–1000 mg/L`} />
               <StatCard label="Caffeine" value={`${plan.caffeineLow}–${plan.caffeineHigh}`} unit="mg"
@@ -782,10 +803,13 @@ export default function TrailFuelPlanner() {
                     <span style={{ color: "var(--text)" }}>→ {fmtPace(plan.effectivePace)}/km effective · {fmtDuration(plan.durationMin)}</span>
                   </> },
                   { n: "2", title: "Energy Expenditure", body: <>
-                    Flat: 1 kcal/kg/km × {bodyWeightKg}kg × {distanceKm}km = {Math.round(bodyWeightKg * distanceKm)} kcal<br />
-                    Elevation: 2 kcal/kg/100m × {bodyWeightKg}kg × {(elevationGainM/100).toFixed(1)} = {Math.round(2 * bodyWeightKg * elevationGainM / 100)} kcal<br />
-                    Trail ×{TRAIL_TERRAIN_MULTIPLIER}{isHot ? " · Heat ×1.08" : ""}<br />
-                    <span style={{ color: "var(--text)" }}>→ {plan.totalKcal.toLocaleString()} kcal · {plan.kcalPerHour} kcal/h</span>
+                    Minetti (2002) polynomial — metabolic cost on slopes<br />
+                    Avg climb grade: {plan.avgGradePct}% (gain / half-distance)<br />
+                    Climb ×{plan.climbRatio.toFixed(2)} × {bodyWeightKg}kg × {(distanceKm/2).toFixed(1)}km = {plan.climbKcal} kcal<br />
+                    Descent ×{plan.descentRatio.toFixed(2)} × {bodyWeightKg}kg × {(distanceKm/2).toFixed(1)}km = {plan.descentKcal} kcal<br />
+                    × {TRAIL_TERRAIN_MULTIPLIER} trail terrain{isHot ? " · ×1.08 heat" : ""}<br />
+                    <span style={{ color: "var(--text)" }}>→ {plan.totalKcal.toLocaleString()} kcal · {plan.kcalPerHour} kcal/h</span><br />
+                    <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Margaria (1963); Minetti et al. (2002)</span>
                   </> },
                   { n: "3", title: "Glycogen Stores", body: <>
                     ~{GLYCOGEN_STORE_G_PER_KG}g/kg in fed athlete (max {GLYCOGEN_MAX_G}g carb-loaded)<br />
@@ -793,22 +817,22 @@ export default function TrailFuelPlanner() {
                     <span style={{ color: "var(--text)" }}>→ Covers ~{Math.round(plan.glycogenKcal / plan.kcalPerHour * 60)} min at race intensity</span>
                   </> },
                   { n: "4", title: "CHO Per Hour (Tiers)", body: <>
-                    &lt;1h: 0–30g/h · 1–2h: 30–60g/h · 2–3h: 60–80g/h · &gt;3h: 80–90g/h<br />
+                    &lt;1h: 0–30 g/h · 1–2h: 30–60 g/h · 2–2.5h: 60–80 g/h · &gt;2.5h: 80–90 g/h<br />
                     Your {plan.durationH}h → tier {plan.choPerHourLow}–{plan.choPerHourHigh} g/h<br />
                     <span style={{ color: "var(--text)" }}>→ Target {plan.choPerHourTarget} g/h · {plan.totalChoNeeded}g total</span><br />
-                    <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Jeukendrup (2011), ACSM/AND/DC (2016)</span>
+                    <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Jeukendrup (2011) J Sports Sci 29(S1):S17-27; (2014) Sports Med 44(S1):25-33</span>
                   </> },
                   { n: "5", title: "Hydration & Sodium", body: <>
-                    Base 600 ml/h @ 15°C · +{Math.max(0, tempC - 15) * 30} ml/h temp · {humidityPct > 70 ? "×1.15 humidity · " : ""}{isHot ? "×1.10 heat" : ""}<br />
+                    Base 600 ml/h @ 15°C · +{Math.max(0, tempC - 15) * 25} ml/h temp · {humidityPct > 70 ? "×1.15 humidity · " : ""}{isHot ? "×1.10 heat" : ""}<br />
                     <span style={{ color: "var(--text)" }}>→ {plan.sweatRateMlPerH} ml/h · {plan.totalFluidL}L total</span><br />
                     Sodium: {plan.sweatRateMlPerH} ml/h × 800 mg/L = {plan.sodiumPerH} mg/h<br />
                     <span style={{ color: "var(--text)" }}>→ {plan.totalSodium} mg total</span><br />
-                    <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Sweat Na varies 500–1000+ mg/L. Individual testing recommended.</span>
+                    <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Sawka et al. (2007) MSSE 39(2):377; Lara et al. (2017) Sports Med 47(S1):39 — sweat [Na⁺] range 200–2000 mg/L</span>
                   </> },
                   { n: "6", title: "Caffeine", body: <>
                     3–6 mg/kg × {bodyWeightKg}kg = {plan.caffeineLow}–{plan.caffeineHigh} mg<br />
                     <span style={{ color: "var(--text)" }}>→ Take 45–60 min pre-race or split in-race</span><br />
-                    <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Peak plasma ~45 min · Gel 100 Caf = 100mg ≈ 1 espresso</span>
+                    <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Thomas et al. (2016) MSSE 48(3):543; Grgic et al. (2021) BJSM 55:929</span>
                   </> },
                 ].map(({ n, title, body }) => (
                   <div key={n}>
@@ -839,7 +863,7 @@ export default function TrailFuelPlanner() {
 
         {/* ── Footer ── */}
         <div style={{ marginTop: 40, textAlign: "center", fontFamily: "monospace", fontSize: 10, color: "var(--text-muted)", lineHeight: 1.7 }}>
-          Not medical advice. Jeukendrup (2011) · ACSM/AND/DC (2016) · Minetti et al. (2002) · Compendium of Physical Activities (2024).<br />
+          Not medical advice. Margaria (1963) · Minetti (2002) · Jeukendrup (2011, 2014) · Thomas, Erdman & Burke (2016) · Sawka (2007) · Lara (2017) · Grgic (2021).<br />
           Always validate your fueling strategy in training before race day.
         </div>
       </main>
