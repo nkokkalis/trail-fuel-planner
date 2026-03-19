@@ -379,9 +379,11 @@ export default function TrailFuelPlanner() {
   const [gpxFile, setGpxFile] = useState(null);
   const [gpxError, setGpxError] = useState(null);
   const gpxInputRef = useRef(null);
-  const [weather, setWeather] = useState(null); // { temp, feelsLike, humidity, windKmh, description, location }
+  const [weather, setWeather] = useState(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState(null);
+  const [raceDate, setRaceDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [raceHour, setRaceHour] = useState(8);
 
   const plan = useMemo(() => computePlan({
     distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm, tempC, humidityPct, isHot, fuelProduct, caffeineProduct,
@@ -413,19 +415,24 @@ export default function TrailFuelPlanner() {
   };
 
   const fetchWeatherAt = async (lat, lon) => {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&wind_speed_unit=kmh&timezone=auto`;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m` +
+      `&wind_speed_unit=kmh&timezone=auto&start_date=${raceDate}&end_date=${raceDate}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error("Weather API request failed");
     const data = await res.json();
-    const c = data.current;
+    // hourly arrays have 24 entries for the day; pick the race hour index
+    const h = data.hourly;
+    const idx = raceHour; // hour 0–23 maps directly to index
     const tzParts = data.timezone?.split("/") ?? [];
     const locationName = tzParts[tzParts.length - 1]?.replace(/_/g, " ") ?? "race location";
     return {
-      temp: Math.round(c.temperature_2m),
-      feelsLike: Math.round(c.apparent_temperature),
-      humidity: c.relative_humidity_2m,
-      windKmh: Math.round(c.wind_speed_10m),
+      temp: Math.round(h.temperature_2m[idx]),
+      feelsLike: Math.round(h.apparent_temperature[idx]),
+      humidity: h.relative_humidity_2m[idx],
+      windKmh: Math.round(h.wind_speed_10m[idx]),
       location: locationName,
+      forecastLabel: `${raceDate} ${String(raceHour).padStart(2, "0")}:00`,
     };
   };
 
@@ -547,8 +554,30 @@ export default function TrailFuelPlanner() {
 
           {/* Weather fetch */}
           <div style={{ marginBottom: 16 }}>
-            {!weather ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+              <div>
+                <label style={{ display: "block", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#8a9a7e", marginBottom: 4 }}>Race Date</label>
+                <input
+                  type="date"
+                  value={raceDate}
+                  onChange={e => { setRaceDate(e.target.value); setWeather(null); }}
+                  style={{ background: "#1a2218", border: "1px solid #2d3b28", borderRadius: 6, color: "#d4e4cc", padding: "7px 10px", fontSize: 13, fontFamily: "'JetBrains Mono', monospace", outline: "none", colorScheme: "dark" }}
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#8a9a7e", marginBottom: 4 }}>Start Time</label>
+                <select
+                  value={raceHour}
+                  onChange={e => { setRaceHour(Number(e.target.value)); setWeather(null); }}
+                  style={{ background: "#1a2218", border: "1px solid #2d3b28", borderRadius: 6, color: "#d4e4cc", padding: "7px 10px", fontSize: 13, fontFamily: "'JetBrains Mono', monospace", outline: "none", cursor: "pointer" }}
+                >
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end", paddingBottom: 1 }}>
+                <label style={{ display: "block", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "transparent", marginBottom: 4 }}>_</label>
                 <button
                   onClick={fetchWeather}
                   disabled={weatherLoading}
@@ -557,22 +586,21 @@ export default function TrailFuelPlanner() {
                     border: "1px dashed #2d3b28",
                     borderRadius: 8,
                     color: weatherLoading ? "#3a4a32" : "#5a7a4a",
-                    padding: "10px 18px",
+                    padding: "7px 16px",
                     fontFamily: "'JetBrains Mono', monospace",
                     fontSize: 12,
                     cursor: weatherLoading ? "default" : "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
+                    whiteSpace: "nowrap",
                   }}
                   onMouseEnter={e => { if (!weatherLoading) { e.currentTarget.style.borderColor = "#4a6a3a"; e.currentTarget.style.color = "#8ab870"; }}}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = "#2d3b28"; e.currentTarget.style.color = "#5a7a4a"; }}
                 >
-                  {weatherLoading ? "⟳ Fetching..." : "⛅ Fetch race-day weather"}
+                  {weatherLoading ? "⟳ Fetching..." : "⛅ Fetch forecast"}
                 </button>
-                {weatherError && <span style={{ fontFamily: "monospace", fontSize: 11, color: "#c05050" }}>{weatherError}</span>}
               </div>
-            ) : (
+              {weatherError && <span style={{ fontFamily: "monospace", fontSize: 11, color: "#c05050", alignSelf: "flex-end", paddingBottom: 4 }}>{weatherError}</span>}
+            </div>
+            {weather && (
               <div style={{
                 background: "#0a1410",
                 border: "1px solid #1e3428",
@@ -586,7 +614,7 @@ export default function TrailFuelPlanner() {
               }}>
                 <div>
                   <div style={{ fontFamily: "monospace", fontSize: 10, color: "#4a6a52", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
-                    ⛅ {gpxFile ? "Race start" : "Current"} — {weather.location}
+                    ⛅ Forecast — {weather.location} · {weather.forecastLabel}
                   </div>
                   <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: "#c8e0b8" }}>{weather.temp}°C <span style={{ color: "#5a7a5a", fontSize: 11 }}>feels {weather.feelsLike}°C</span></span>
