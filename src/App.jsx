@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 
 // ─── SCIENCE-BASED CONSTANTS ──────────────────────────────────────────
 // - Margaria et al. (1963) J Appl Physiol 18(2):367-370 — 1 kcal/kg/km flat running
@@ -317,6 +317,8 @@ const BASE_CSS = `
   ::selection { background: var(--selection-bg); color: var(--text); }
   input:focus, select:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 2px var(--focus-ring); outline: none; }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  html { scrollbar-width: none; }
+  html::-webkit-scrollbar { display: none; }
   .grid-course { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px; }
   .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
   .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -582,6 +584,11 @@ export default function FuelPlanner() {
   const [tempC, setTempC] = useState(15);
   const [humidityPct, setHumidityPct] = useState(50);
   const [isHot, setIsHot] = useState(false);
+
+  // Auto-derive isHot from conditions
+  useEffect(() => {
+    setIsHot(tempC >= 25 || humidityPct > 70);
+  }, [tempC, humidityPct]);
 
   // Fueling
   const [fuelProduct, setFuelProduct] = useState("Maurten Gel 160");
