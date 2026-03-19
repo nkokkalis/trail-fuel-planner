@@ -26,9 +26,14 @@ const CHO_TIERS = [
   { maxHours: Infinity, low: 80, high: 90, note: "Max absorption — trained gut required" },
 ];
 
-// Sodium tiers
-const SODIUM_BASE_MG_PER_H = 400; // moderate sweater baseline
-const SODIUM_HEAT_MULTIPLIER = 1.5;
+// Sodium / hydration tiers
+// Base sweat rate ~600ml/h at 15°C; +30ml/h per °C above 15; humidity >70% adds ~15%
+// Sodium loss: ~500mg/L sweat (moderate sweater); salty sweaters can be 1000+mg/L
+const SODIUM_BASE_MG_PER_H = 400;
+const SWEAT_RATE_BASE_ML_PER_H = 600;
+const SWEAT_RATE_TEMP_ML_PER_DEG = 30; // above 15°C reference
+const SWEAT_RATE_HUMIDITY_FACTOR = 1.15; // if humidity >70%
+const SODIUM_MG_PER_L_SWEAT = 800; // mid-range (500–1000 mg/L)
 
 // Product database (per unit)
 const PRODUCTS = {
@@ -97,7 +102,7 @@ function parseGpx(text) {
 }
 
 function computePlan(inputs) {
-  const { distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm, tempC, isHot, fuelProduct, caffeineProduct } = inputs;
+  const { distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm, tempC, humidityPct, isHot, fuelProduct, caffeineProduct } = inputs;
 
   // ── Estimated duration ──
   // Rule of thumb: +1 min/km per 100m gain averaged over distance
@@ -130,8 +135,18 @@ function computePlan(inputs) {
   const fuelingDurationH = Math.max(0, durationH - 0.5); // start fueling at ~30 min
   const totalChoNeeded = Math.round(choPerHourTarget * fuelingDurationH);
 
-  // ── Sodium ──
-  const sodiumPerH = Math.round(SODIUM_BASE_MG_PER_H * (isHot ? SODIUM_HEAT_MULTIPLIER : 1.0));
+  // ── Hydration & Sodium (temperature + humidity driven) ──
+  const refTemp = 15;
+  const tempAboveRef = Math.max(0, tempC - refTemp);
+  let sweatRateMlPerH = SWEAT_RATE_BASE_ML_PER_H + tempAboveRef * SWEAT_RATE_TEMP_ML_PER_DEG;
+  if (humidityPct > 70) sweatRateMlPerH *= SWEAT_RATE_HUMIDITY_FACTOR;
+  if (isHot) sweatRateMlPerH *= 1.1; // extra 10% buffer for heat stress
+  sweatRateMlPerH = Math.round(sweatRateMlPerH / 25) * 25; // round to nearest 25ml
+  const totalFluidMl = Math.round(sweatRateMlPerH * durationH);
+  const totalFluidL = Math.round(totalFluidMl / 100) / 10;
+
+  // Sodium from sweat rate (not just a flat multiplier)
+  const sodiumPerH = Math.round((sweatRateMlPerH / 1000) * SODIUM_MG_PER_L_SWEAT);
   const totalSodium = Math.round(sodiumPerH * durationH);
 
   // ── Caffeine ──
@@ -187,6 +202,8 @@ function computePlan(inputs) {
     choPerHourHigh,
     tierNote: tier.note,
     totalChoNeeded,
+    sweatRateMlPerH,
+    totalFluidL,
     sodiumPerH,
     totalSodium,
     caffeineLow,
@@ -340,20 +357,6 @@ function TimelineItem({ item, isLast }) {
   );
 }
 
-function ComparisonRow({ label, maurten, ours, unit, isBad }) {
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, padding: "8px 0", borderBottom: "1px solid #1a2418" }}>
-      <div style={{ fontFamily: "monospace", fontSize: 12, color: "#7a9470" }}>{label}</div>
-      <div style={{ fontFamily: "monospace", fontSize: 13, color: isBad ? "#d45050" : "#c09050", textDecoration: isBad ? "line-through" : "none" }}>
-        {maurten} {unit}
-      </div>
-      <div style={{ fontFamily: "monospace", fontSize: 13, color: "#8ab870", fontWeight: 600 }}>
-        {ours} {unit}
-      </div>
-    </div>
-  );
-}
-
 // ─── MAIN APP ────────────────────────────────────────────────────────
 
 export default function TrailFuelPlanner() {
@@ -362,17 +365,21 @@ export default function TrailFuelPlanner() {
   const [bodyWeightKg, setBodyWeightKg] = useState(75);
   const [flatPaceMinPerKm, setFlatPaceMinPerKm] = useState(5.5);
   const [tempC, setTempC] = useState(15);
+  const [humidityPct, setHumidityPct] = useState(50);
   const [isHot, setIsHot] = useState(false);
   const [fuelProduct, setFuelProduct] = useState("Maurten Gel 160");
   const [caffeineProduct, setCaffeineProduct] = useState("Maurten Gel 100 Caf");
   const [activeTab, setActiveTab] = useState("plan");
-  const [gpxFile, setGpxFile] = useState(null); // { name, distanceKm, elevationGainM, points }
+  const [gpxFile, setGpxFile] = useState(null);
   const [gpxError, setGpxError] = useState(null);
   const gpxInputRef = useRef(null);
+  const [weather, setWeather] = useState(null); // { temp, feelsLike, humidity, windKmh, description, location }
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState(null);
 
   const plan = useMemo(() => computePlan({
-    distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm, tempC, isHot, fuelProduct, caffeineProduct,
-  }), [distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm, tempC, isHot, fuelProduct, caffeineProduct]);
+    distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm, tempC, humidityPct, isHot, fuelProduct, caffeineProduct,
+  }), [distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm, tempC, humidityPct, isHot, fuelProduct, caffeineProduct]);
 
   const handleGpxUpload = (e) => {
     const file = e.target.files[0];
@@ -399,6 +406,52 @@ export default function TrailFuelPlanner() {
     setGpxError(null);
   };
 
+  const fetchWeather = () => {
+    if (!navigator.geolocation) {
+      setWeatherError("Geolocation not supported by your browser.");
+      return;
+    }
+    setWeatherLoading(true);
+    setWeatherError(null);
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        try {
+          const { latitude: lat, longitude: lon } = coords;
+          const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&wind_speed_unit=kmh&timezone=auto`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error("Weather API request failed");
+          const data = await res.json();
+          const c = data.current;
+          // Reverse geocode with open-meteo's timezone city (fallback)
+          const tzParts = data.timezone?.split("/") ?? [];
+          const locationName = tzParts[tzParts.length - 1]?.replace(/_/g, " ") ?? "your location";
+          setWeather({
+            temp: Math.round(c.temperature_2m),
+            feelsLike: Math.round(c.apparent_temperature),
+            humidity: c.relative_humidity_2m,
+            windKmh: Math.round(c.wind_speed_10m),
+            location: locationName,
+          });
+        } catch (err) {
+          setWeatherError("Could not fetch weather. Try again.");
+        } finally {
+          setWeatherLoading(false);
+        }
+      },
+      () => {
+        setWeatherError("Location access denied.");
+        setWeatherLoading(false);
+      }
+    );
+  };
+
+  const applyWeather = () => {
+    if (!weather) return;
+    setTempC(weather.temp);
+    setHumidityPct(weather.humidity);
+    setIsHot(weather.temp >= 25 || weather.feelsLike >= 27);
+  };
+
   const formatDuration = (min) => {
     const h = Math.floor(min / 60);
     const m = min % 60;
@@ -414,7 +467,6 @@ export default function TrailFuelPlanner() {
   const tabs = [
     { id: "plan", label: "Protocol" },
     { id: "calc", label: "Calculations" },
-    { id: "compare", label: "vs Maurten" },
   ];
 
   return (
@@ -460,15 +512,92 @@ export default function TrailFuelPlanner() {
             <NumberInput label="Elevation +" value={elevationGainM} onChange={setElevationGainM} unit="m" min={0} max={10000} step={50} />
             <NumberInput label="Body Weight" value={bodyWeightKg} onChange={setBodyWeightKg} unit="kg" min={40} max={150} />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 16, alignItems: "start" }}>
             <NumberInput label="Flat Pace" value={flatPaceMinPerKm} onChange={setFlatPaceMinPerKm} unit="min/km" min={3} max={12} step={0.1} helpText="Your road half pace" />
             <NumberInput label="Temperature" value={tempC} onChange={setTempC} unit="°C" min={-10} max={45} />
+            <NumberInput label="Humidity" value={humidityPct} onChange={setHumidityPct} unit="%" min={0} max={100} />
             <div style={{ marginBottom: 16, display: "flex", alignItems: "flex-end", paddingBottom: 8 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input type="checkbox" checked={isHot} onChange={e => setIsHot(e.target.checked)} style={{ accentColor: "#6b8a5e" }} />
                 <span style={{ fontFamily: "monospace", fontSize: 12, color: "#8a9a7e" }}>Hot / humid</span>
               </label>
             </div>
+          </div>
+
+          {/* Weather fetch */}
+          <div style={{ marginBottom: 16 }}>
+            {!weather ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button
+                  onClick={fetchWeather}
+                  disabled={weatherLoading}
+                  style={{
+                    background: "transparent",
+                    border: "1px dashed #2d3b28",
+                    borderRadius: 8,
+                    color: weatherLoading ? "#3a4a32" : "#5a7a4a",
+                    padding: "10px 18px",
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: 12,
+                    cursor: weatherLoading ? "default" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                  onMouseEnter={e => { if (!weatherLoading) { e.currentTarget.style.borderColor = "#4a6a3a"; e.currentTarget.style.color = "#8ab870"; }}}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "#2d3b28"; e.currentTarget.style.color = "#5a7a4a"; }}
+                >
+                  {weatherLoading ? "⟳ Fetching..." : "⛅ Fetch race-day weather"}
+                </button>
+                {weatherError && <span style={{ fontFamily: "monospace", fontSize: 11, color: "#c05050" }}>{weatherError}</span>}
+              </div>
+            ) : (
+              <div style={{
+                background: "#0a1410",
+                border: "1px solid #1e3428",
+                borderRadius: 8,
+                padding: "12px 16px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: 12,
+              }}>
+                <div>
+                  <div style={{ fontFamily: "monospace", fontSize: 10, color: "#4a6a52", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+                    ⛅ Current — {weather.location}
+                  </div>
+                  <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: "#c8e0b8" }}>{weather.temp}°C <span style={{ color: "#5a7a5a", fontSize: 11 }}>feels {weather.feelsLike}°C</span></span>
+                    <span style={{ fontFamily: "monospace", fontSize: 13, color: "#8ab8a0" }}>💧 {weather.humidity}%</span>
+                    <span style={{ fontFamily: "monospace", fontSize: 13, color: "#8ab8a0" }}>💨 {weather.windKmh} km/h</span>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={applyWeather}
+                    style={{
+                      background: "#1a3028",
+                      border: "1px solid #2a5040",
+                      borderRadius: 6,
+                      color: "#8ab870",
+                      padding: "6px 14px",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: 11,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Apply to plan
+                  </button>
+                  <button
+                    onClick={() => { setWeather(null); setWeatherError(null); }}
+                    style={{ background: "transparent", border: "none", color: "#4a5a42", cursor: "pointer", fontFamily: "monospace", fontSize: 12, padding: "4px 8px" }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           {/* GPX Upload */}
           <div style={{ marginTop: 8, marginBottom: 16 }}>
@@ -601,10 +730,21 @@ export default function TrailFuelPlanner() {
               />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 28 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 28 }}>
               <StatCard label="In-Race CHO" value={plan.totalChoNeeded} unit="g total" />
-              <StatCard label="Sodium" value={plan.sodiumPerH} unit="mg/h" />
-              <StatCard label="Caffeine Range" value={`${plan.caffeineLow}–${plan.caffeineHigh}`} unit="mg total" formula={`3-6 mg/kg body weight\n= ${plan.caffeineLow}–${plan.caffeineHigh} mg\n\nTake 45-60 min before race\nor split during race.\n\nSource: ACSM (2016)`} />
+              <StatCard
+                label="Fluid"
+                value={`${plan.sweatRateMlPerH}`}
+                unit="ml/h"
+                formula={`Base sweat rate: 600 ml/h at 15°C\n+30 ml/h per °C above 15°C (${Math.max(0,tempC-15)}°C above)\n${humidityPct > 70 ? `×1.15 humidity (${humidityPct}% > 70%)\n` : ""}${isHot ? `×1.10 heat stress\n` : ""}= ${plan.sweatRateMlPerH} ml/h\n→ ${plan.totalFluidL}L over ${plan.durationH}h\n\nSip steadily; don't over-drink.\nSource: ACSM (2007)`}
+              />
+              <StatCard
+                label="Sodium"
+                value={plan.sodiumPerH}
+                unit="mg/h"
+                formula={`Sweat rate: ${plan.sweatRateMlPerH} ml/h\nSodium in sweat: ~800 mg/L (mid-range)\n= ${plan.sodiumPerH} mg/h\n→ ${plan.totalSodium} mg total\n\nIndividual sweat testing\n(Precision Hydration) recommended.\nRange: 500–1000 mg/L`}
+              />
+              <StatCard label="Caffeine" value={`${plan.caffeineLow}–${plan.caffeineHigh}`} unit="mg total" formula={`3-6 mg/kg body weight\n= ${plan.caffeineLow}–${plan.caffeineHigh} mg\n\nTake 45-60 min before race\nor split during race.\n\nSource: ACSM (2016)`} />
             </div>
 
             {/* Inventory */}
@@ -704,11 +844,14 @@ export default function TrailFuelPlanner() {
                   <span style={{ fontSize: 10, color: "#4a6340" }}>Jeukendrup (2011), ACSM/AND/DC Position Stand (2016)</span>
                 </div>
                 <div style={{ marginBottom: 16 }}>
-                  <span style={{ color: "#8ab870", fontWeight: 600 }}>5. Sodium</span><br />
-                  Moderate sweater baseline: ~400 mg/h<br />
-                  Hot conditions: ×1.5<br />
-                  <span style={{ color: "#c8e0b8" }}>→ {plan.sodiumPerH} mg/h ({plan.totalSodium} mg total)</span><br />
-                  <span style={{ fontSize: 10, color: "#4a6340" }}>Individual sweat testing recommended for precision</span>
+                  <span style={{ color: "#8ab870", fontWeight: 600 }}>5. Hydration & Sodium</span><br />
+                  Sweat rate base: 600 ml/h at 15°C, +30 ml/h per °C above reference<br />
+                  {humidityPct > 70 && <>Humidity {humidityPct}% {">"} 70%: ×1.15<br /></>}
+                  {isHot && <>Heat stress flag: ×1.10<br /></>}
+                  <span style={{ color: "#c8e0b8" }}>→ {plan.sweatRateMlPerH} ml/h · {plan.totalFluidL}L over {plan.durationH}h</span><br />
+                  Sodium in sweat: ~800 mg/L (moderate sweater mid-range)<br />
+                  <span style={{ color: "#c8e0b8" }}>→ {plan.sodiumPerH} mg/h · {plan.totalSodium} mg total</span><br />
+                  <span style={{ fontSize: 10, color: "#4a6340" }}>Sweat sodium varies 500–1000+ mg/L. Sweat testing gives real data.</span>
                 </div>
                 <div>
                   <span style={{ color: "#8ab870", fontWeight: 600 }}>6. Caffeine</span><br />
@@ -740,56 +883,6 @@ export default function TrailFuelPlanner() {
           </div>
         )}
 
-        {/* COMPARISON TAB */}
-        {activeTab === "compare" && (
-          <div>
-            <div style={{
-              background: "#1a1010",
-              border: "1px solid #3a1a1a",
-              borderRadius: 12,
-              padding: 24,
-              marginBottom: 20,
-            }}>
-              <div style={{ fontFamily: "monospace", fontSize: 11, color: "#d45050", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
-                Maurten Beta Planner Output
-              </div>
-              <div style={{ fontFamily: "monospace", fontSize: 11, color: "#8a5050", marginBottom: 16 }}>
-                For 21 km trail, +1000m elevation
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, padding: "8px 0", borderBottom: "1px solid #2a1818", marginBottom: 4 }}>
-                <div style={{ fontFamily: "monospace", fontSize: 10, color: "#5a4a4a", textTransform: "uppercase" }}>Metric</div>
-                <div style={{ fontFamily: "monospace", fontSize: 10, color: "#8a4040", textTransform: "uppercase" }}>Maurten</div>
-                <div style={{ fontFamily: "monospace", fontSize: 10, color: "#5a8a4a", textTransform: "uppercase" }}>This Planner</div>
-              </div>
-
-              <ComparisonRow label="CHO/h" maurten="5,600 g" ours={`${plan.choPerHourTarget} g`} unit="" isBad />
-              <ComparisonRow label="Energy" maurten="20,300 kcal" ours={`${plan.totalKcal.toLocaleString()} kcal`} unit="" isBad />
-              <ComparisonRow label="Sodium/h" maurten="11,200 mg" ours={`${plan.sodiumPerH} mg`} unit="" isBad />
-              <ComparisonRow label="Target CHO" maurten="270 g" ours={`${plan.totalChoNeeded} g`} unit="" isBad={false} />
-              <ComparisonRow label="Glycogen" maurten="275 g" ours={`${plan.glycogenG} g`} unit="" isBad={false} />
-              <ComparisonRow label="In-race gels" maurten="6× Gel 160" ours={`${plan.numGels}× ${fuelProduct.split(' ').slice(-1)}`} unit="" isBad={false} />
-            </div>
-
-            <div style={{
-              background: "#111a0f",
-              border: "1px solid #1e2c1a",
-              borderRadius: 12,
-              padding: 20,
-            }}>
-              <div style={{ fontFamily: "monospace", fontSize: 11, color: "#8a9a7e", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>
-                What Went Wrong
-              </div>
-              <div style={{ fontFamily: "monospace", fontSize: 12, color: "#7a9470", lineHeight: 1.8 }}>
-                <span style={{ color: "#d45050" }}>5,600 g CHO/h</span> — Off by ~100×. Max human gut absorption is ~90g/h with trained gut and dual-transport carbs. Likely a unit/decimal bug (56.00 → 5600?).<br /><br />
-                <span style={{ color: "#d45050" }}>-20,300 kcal</span> — Off by ~10×. A 21km trail at {bodyWeightKg}kg costs ~{plan.totalKcal} kcal. 20,300 kcal would require running ~270km.<br /><br />
-                <span style={{ color: "#d45050" }}>11,200 mg/h sodium</span> — Dangerous. This would be ~46g salt/hour. Normal athletic range is 300-700 mg/h. Even extreme heavy sweaters in heat rarely need {">"} 1,500 mg/h.<br /><br />
-                <span style={{ color: "#c09050" }}>270g total CHO</span> — Aggressive but not impossible if you assume 90g/h for 3h. However, for a mountainous half-marathon, ~{plan.totalChoNeeded}g is more appropriate given the mix of uphills (lower intake tolerance) and intensity.<br /><br />
-                <span style={{ color: "#8ab870" }}>275g glycogen</span> — This one is actually reasonable for a ~{bodyWeightKg}kg athlete.
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Footer */}
         <div style={{ marginTop: 32, padding: 16, textAlign: "center" }}>
