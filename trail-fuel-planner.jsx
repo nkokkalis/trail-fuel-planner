@@ -76,11 +76,15 @@ function parseGpx(text) {
   let elevationGainM = 0;
   let prevLat = null, prevLon = null, prevEle = null;
 
+  let startLat = null, startLon = null;
+
   for (const pt of points) {
     const lat = parseFloat(pt.getAttribute("lat"));
     const lon = parseFloat(pt.getAttribute("lon"));
     const eleEl = pt.querySelector("ele");
     const ele = eleEl ? parseFloat(eleEl.textContent) : null;
+
+    if (startLat === null) { startLat = lat; startLon = lon; }
 
     if (prevLat !== null) {
       distanceKm += haversineKm(prevLat, prevLon, lat, lon);
@@ -96,8 +100,10 @@ function parseGpx(text) {
 
   return {
     distanceKm: Math.round(distanceKm * 10) / 10,
-    elevationGainM: Math.round(elevationGainM / 10) * 10, // round to nearest 10m
+    elevationGainM: Math.round(elevationGainM / 10) * 10,
     points: points.length,
+    startLat,
+    startLon,
   };
 }
 
@@ -406,40 +412,55 @@ export default function TrailFuelPlanner() {
     setGpxError(null);
   };
 
+  const fetchWeatherAt = async (lat, lon) => {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&wind_speed_unit=kmh&timezone=auto`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Weather API request failed");
+    const data = await res.json();
+    const c = data.current;
+    const tzParts = data.timezone?.split("/") ?? [];
+    const locationName = tzParts[tzParts.length - 1]?.replace(/_/g, " ") ?? "race location";
+    return {
+      temp: Math.round(c.temperature_2m),
+      feelsLike: Math.round(c.apparent_temperature),
+      humidity: c.relative_humidity_2m,
+      windKmh: Math.round(c.wind_speed_10m),
+      location: locationName,
+    };
+  };
+
   const fetchWeather = () => {
-    if (!navigator.geolocation) {
-      setWeatherError("Geolocation not supported by your browser.");
-      return;
-    }
     setWeatherLoading(true);
     setWeatherError(null);
+
+    // Prefer GPX start coordinates
+    if (gpxFile?.startLat != null) {
+      fetchWeatherAt(gpxFile.startLat, gpxFile.startLon)
+        .then(setWeather)
+        .catch(() => setWeatherError("Could not fetch weather. Try again."))
+        .finally(() => setWeatherLoading(false));
+      return;
+    }
+
+    // Fall back to browser geolocation
+    if (!navigator.geolocation) {
+      setWeatherError("Load a GPX file or allow location access.");
+      setWeatherLoading(false);
+      return;
+    }
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
         try {
-          const { latitude: lat, longitude: lon } = coords;
-          const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&wind_speed_unit=kmh&timezone=auto`;
-          const res = await fetch(url);
-          if (!res.ok) throw new Error("Weather API request failed");
-          const data = await res.json();
-          const c = data.current;
-          // Reverse geocode with open-meteo's timezone city (fallback)
-          const tzParts = data.timezone?.split("/") ?? [];
-          const locationName = tzParts[tzParts.length - 1]?.replace(/_/g, " ") ?? "your location";
-          setWeather({
-            temp: Math.round(c.temperature_2m),
-            feelsLike: Math.round(c.apparent_temperature),
-            humidity: c.relative_humidity_2m,
-            windKmh: Math.round(c.wind_speed_10m),
-            location: locationName,
-          });
-        } catch (err) {
+          const w = await fetchWeatherAt(coords.latitude, coords.longitude);
+          setWeather(w);
+        } catch {
           setWeatherError("Could not fetch weather. Try again.");
         } finally {
           setWeatherLoading(false);
         }
       },
       () => {
-        setWeatherError("Location access denied.");
+        setWeatherError("Location access denied. Load a GPX file to use race location.");
         setWeatherLoading(false);
       }
     );
@@ -565,7 +586,7 @@ export default function TrailFuelPlanner() {
               }}>
                 <div>
                   <div style={{ fontFamily: "monospace", fontSize: 10, color: "#4a6a52", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
-                    ⛅ Current — {weather.location}
+                    ⛅ {gpxFile ? "Race start" : "Current"} — {weather.location}
                   </div>
                   <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: "#c8e0b8" }}>{weather.temp}°C <span style={{ color: "#5a7a5a", fontSize: 11 }}>feels {weather.feelsLike}°C</span></span>
