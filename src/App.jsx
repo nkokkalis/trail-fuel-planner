@@ -39,8 +39,8 @@ const SODIUM_MG_PER_L_SWEAT = 800;       // population mid-range; range 200–20
 // ─── SPORT CONFIG ─────────────────────────────────────────────────────
 const SPORT_CONFIG = {
   Road:  { terrainMult: 1.0,  paceAdj: 0.0, desc: "Paved roads — no terrain penalty" },
-  Trail: { terrainMult: 1.12, paceAdj: 0.4, desc: "Mountain & singletrack — +12% energy, +0.4 min/km" },
-  Ultra: { terrainMult: 1.12, paceAdj: 0.4, desc: ">5h events — fat & protein planning included" },
+  Trail: { terrainMult: 1.12, paceAdj: 1.0, desc: "Mountain & singletrack — +12% energy, +1.0 min/km" },
+  Ultra: { terrainMult: 1.12, paceAdj: 1.0, desc: ">5h events — fat & protein planning included" },
 };
 
 // ─── PRODUCTS ─────────────────────────────────────────────────────────
@@ -92,7 +92,8 @@ const PRODUCT_GROUPS = {
   "Real Food":       Object.keys(PRODUCTS).filter(k => PRODUCTS[k].type === "food"),
 };
 
-const CAFFEINE_PRODUCTS = ["None", ...Object.keys(PRODUCTS).filter(k => (PRODUCTS[k].caffeine ?? 0) > 0)];
+const NO_CAFFEINE = "None";
+const CAFFEINE_PRODUCTS = [NO_CAFFEINE, ...Object.keys(PRODUCTS).filter(k => (PRODUCTS[k].caffeine ?? 0) > 0)];
 
 // ─── AID STATION STRATEGY ─────────────────────────────────────────────
 const AID_STATION_STRATEGY = {
@@ -246,7 +247,7 @@ function computePlan(inputs) {
   const aidTier = durationH < 8 ? "short" : durationH < 16 ? "medium" : "long";
 
   const product = PRODUCTS[fuelProduct];
-  const cafProduct = caffeineProduct !== "None" ? PRODUCTS[caffeineProduct] : null;
+  const cafProduct = caffeineProduct !== NO_CAFFEINE ? PRODUCTS[caffeineProduct] : null;
   const numGels = Math.ceil(totalChoNeeded / product.cho);
   const gelIntervalMin = numGels > 1 ? Math.round(fuelingDurationH * 60 / numGels) : null;
 
@@ -292,7 +293,6 @@ function computePlan(inputs) {
   return {
     durationMin: Math.round(durationMin), durationH: Math.round(durationH * 100) / 100,
     effectivePace: Math.round(effectivePace * 100) / 100,
-    avgGradePercent: Math.round((elevationGainM / (distanceKm * 1000)) * 1000) / 10,
     avgGradePct, climbRatio, descentRatio,
     climbKcal: Math.round(climbKcal), descentKcal: Math.round(descentKcal),
     totalKcal, kcalPerHour,
@@ -441,6 +441,13 @@ const LIGHT_CSS = `
   }
 `;
 
+// ─── FORMATTERS & CONSTANTS ───────────────────────────────────────────
+
+const fmtDuration = (min) => `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, "0")}m`;
+const fmtPace = (mpk) => `${Math.floor(mpk)}:${String(Math.round((mpk % 1) * 60)).padStart(2, "0")}`;
+
+const TABS = [{ id: "plan", label: "Protocol" }, { id: "calc", label: "Calculations" }, { id: "refs", label: "References" }];
+
 // ─── COMPONENTS ───────────────────────────────────────────────────────
 
 function Divider({ label }) {
@@ -482,19 +489,13 @@ function NumberInput({ label, value, onChange, unit, min, max, step = 1, helpTex
 }
 
 function PaceInput({ label, value, onChange, helpText }) {
-  const decToStr = (dec) => {
-    const m = Math.floor(dec);
-    const s = Math.round((dec % 1) * 60);
-    return `${m}:${String(s).padStart(2, "0")}`;
-  };
-
-  const [raw, setRaw] = useState(() => decToStr(value));
+  const [raw, setRaw] = useState(() => fmtPace(value));
   const lastExternal = useRef(value);
 
-  // Sync display if value changes from outside (e.g. reset)
+  // Sync display if value changes from outside (e.g. GPX upload)
   useEffect(() => {
     if (Math.abs(lastExternal.current - value) > 0.001) {
-      setRaw(decToStr(value));
+      setRaw(fmtPace(value));
     }
     lastExternal.current = value;
   }, [value]);
@@ -516,7 +517,7 @@ function PaceInput({ label, value, onChange, helpText }) {
     }
   };
 
-  const handleBlur = () => setRaw(decToStr(value));
+  const handleBlur = () => setRaw(fmtPace(value));
 
   return (
     <div>
@@ -648,12 +649,7 @@ export default function FuelPlanner() {
   // Conditions
   const [tempC, setTempC] = useState(15);
   const [humidityPct, setHumidityPct] = useState(50);
-  const [isHot, setIsHot] = useState(false);
-
-  // Auto-derive isHot from conditions
-  useEffect(() => {
-    setIsHot(tempC >= 25 || humidityPct > 70);
-  }, [tempC, humidityPct]);
+  const isHot = tempC >= 25 || humidityPct > 70;
 
   // Fueling
   const [fuelProduct, setFuelProduct] = useState("Maurten Gel 160");
@@ -677,7 +673,7 @@ export default function FuelPlanner() {
   const plan = useMemo(() => computePlan({
     sportType, distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm,
     tempC, humidityPct, isHot, fuelProduct, caffeineProduct,
-  }), [sportType, distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm, tempC, humidityPct, isHot, fuelProduct, caffeineProduct]);
+  }), [sportType, distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm, tempC, humidityPct, fuelProduct, caffeineProduct]);
 
   // ── GPX handler ──
   const handleGpxUpload = (e) => {
@@ -761,13 +757,9 @@ export default function FuelPlanner() {
     if (!weather) return;
     setTempC(weather.temp);
     setHumidityPct(weather.humidity);
-    setIsHot(weather.temp >= 25 || weather.feelsLike >= 27);
   };
 
   // ── Helpers ──
-  const fmtDuration = (min) => `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, "0")}m`;
-  const fmtPace = (mpk) => `${Math.floor(mpk)}:${String(Math.round((mpk % 1) * 60)).padStart(2, "0")}`;
-
   const inlineInputStyle = {
     background: "var(--input-bg)", border: "1px solid var(--input-border)", borderRadius: 7,
     color: "var(--input-text)", padding: "9px 10px", fontSize: 13,
@@ -949,7 +941,7 @@ export default function FuelPlanner() {
             </div>
             <div style={{ paddingBottom: 4 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none", minHeight: 44 }}>
-                <input type="checkbox" checked={isHot} onChange={e => setIsHot(e.target.checked)}
+                <input type="checkbox" checked={isHot} readOnly
                   style={{ accentColor: "var(--accent)", width: 16, height: 16, flexShrink: 0 }} />
                 <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "var(--text-label)" }}>Hot / humid (+8% energy)</span>
               </label>
@@ -966,7 +958,7 @@ export default function FuelPlanner() {
 
         {/* ── Tabs ── */}
         <div style={{ display: "flex", gap: 2, marginBottom: 14, background: "var(--tab-bar)", borderRadius: 10, padding: "3px" }}>
-          {[{ id: "plan", label: "Protocol" }, { id: "calc", label: "Calculations" }, { id: "refs", label: "References" }].map(t => (
+          {TABS.map(t => (
             <button
               key={t.id}
               onClick={() => setActiveTab(t.id)}
@@ -1035,7 +1027,7 @@ export default function FuelPlanner() {
                     {plan.numGels * product.cho}g CHO{plan.gelIntervalMin ? ` · every ~${plan.gelIntervalMin} min` : ""}
                   </div>
                 </div>
-                {caffeineProduct !== "None" && (
+                {caffeineProduct !== NO_CAFFEINE && (
                   <div>
                     <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 7 }}>Caffeine</div>
                     <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, color: "var(--warn-label)", fontWeight: 600 }}>
