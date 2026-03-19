@@ -481,6 +481,71 @@ function NumberInput({ label, value, onChange, unit, min, max, step = 1, helpTex
   );
 }
 
+function PaceInput({ label, value, onChange, helpText }) {
+  const decToStr = (dec) => {
+    const m = Math.floor(dec);
+    const s = Math.round((dec % 1) * 60);
+    return `${m}:${String(s).padStart(2, "0")}`;
+  };
+
+  const [raw, setRaw] = useState(() => decToStr(value));
+  const lastExternal = useRef(value);
+
+  // Sync display if value changes from outside (e.g. reset)
+  useEffect(() => {
+    if (Math.abs(lastExternal.current - value) > 0.001) {
+      setRaw(decToStr(value));
+    }
+    lastExternal.current = value;
+  }, [value]);
+
+  const handleChange = (e) => {
+    const str = e.target.value;
+    setRaw(str);
+    // Accept MM:SS once seconds are two digits
+    const full = str.match(/^(\d{1,2}):(\d{2})$/);
+    if (full) {
+      const m = parseInt(full[1], 10);
+      const s = parseInt(full[2], 10);
+      if (s < 60 && m > 0) onChange(m + s / 60);
+    }
+    // Accept plain number like "5" → 5:00
+    if (/^\d{1,2}$/.test(str)) {
+      const m = parseInt(str, 10);
+      if (m > 0 && m < 20) onChange(m);
+    }
+  };
+
+  const handleBlur = () => setRaw(decToStr(value));
+
+  return (
+    <div>
+      <label style={{ display: "block", fontFamily: "'JetBrains Mono', monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-label)", marginBottom: 5 }}>
+        {label}
+      </label>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <input
+          type="text"
+          value={raw}
+          onChange={handleChange}
+          onBlur={handleBlur}
+          inputMode="numeric"
+          placeholder="5:30"
+          style={{
+            background: "var(--input-bg)", border: "1px solid var(--input-border)",
+            borderRadius: 7, color: "var(--input-text)", padding: "9px 10px",
+            fontSize: 15, fontFamily: "'JetBrains Mono', monospace",
+            width: "100%", minWidth: 0, transition: "border-color 0.15s",
+            minHeight: 44,
+          }}
+        />
+        <span style={{ color: "var(--text-muted)", fontSize: 11, fontFamily: "monospace", flexShrink: 0 }}>min/km</span>
+      </div>
+      {helpText && <div style={{ color: "var(--text-muted)", fontSize: 10, marginTop: 4, fontFamily: "monospace" }}>{helpText}</div>}
+    </div>
+  );
+}
+
 function SelectInput({ label, value, onChange, options, grouped }) {
   return (
     <div>
@@ -784,7 +849,7 @@ export default function FuelPlanner() {
             <NumberInput label="Distance" value={distanceKm} onChange={setDistanceKm} unit="km" min={1} max={400} />
             <NumberInput label="Elevation +" value={elevationGainM} onChange={setElevationGainM} unit="m" min={0} max={15000} step={50} />
             <NumberInput label="Body Weight" value={bodyWeightKg} onChange={setBodyWeightKg} unit="kg" min={40} max={150} />
-            <NumberInput label="Flat Pace" value={flatPaceMinPerKm} onChange={setFlatPaceMinPerKm} unit="min/km" min={3} max={15} step={0.1} helpText="Road race pace" />
+            <PaceInput label="Flat Pace" value={flatPaceMinPerKm} onChange={setFlatPaceMinPerKm} helpText="Road race pace" />
           </div>
 
           {/* GPX */}
