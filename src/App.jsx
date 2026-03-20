@@ -232,6 +232,9 @@ function computePlan(inputs) {
 
   const caffeineLow = Math.round(bodyWeightKg * 3);
   const caffeineHigh = Math.round(bodyWeightKg * 6);
+  const caffeineCeiling = Math.round(bodyWeightKg * 9); // impairment threshold (Fellrnr; consistent with ISSN upper bound)
+  const caffeineDoses = cafProduct ? (isUltra ? 2 : 1) : 0;
+  const caffeineTotal = caffeineDoses * (cafProduct?.caffeine ?? 0);
 
   // ── Ultra-specific: fat oxidation + protein ──
   // Fat fraction scales with duration (Brooks & Mercier 1994 crossover concept)
@@ -321,7 +324,7 @@ function computePlan(inputs) {
     glycogenG: Math.round(glycogenG), glycogenKcal,
     choPerHourTarget, choPerHourLow: tier.low, choPerHourHigh: tier.high, tierNote: tier.note,
     totalChoNeeded, sweatRateMlPerH, totalFluidL, sodiumPerH, totalSodium,
-    caffeineLow, caffeineHigh, numGels, gelIntervalMin, timeline, fuelProduct,
+    caffeineLow, caffeineHigh, caffeineCeiling, caffeineTotal, caffeineDoses, numGels, gelIntervalMin, timeline, fuelProduct,
     isUltra, effortDistanceKm, fatFractionOfEnergy, fatGPerH, proteinGPerH, totalProteinG, totalFatG, aidTier,
     realFoodTotalCho, realFoodTotalProtein, realFoodTotalKcal,
     cfg,
@@ -1096,6 +1099,18 @@ export default function FuelPlanner() {
               <StatCard label="Caffeine" value={`${plan.caffeineLow}–${plan.caffeineHigh}`} unit="mg"
                 formula={`3–6 mg/kg × ${bodyWeightKg}kg\n${plan.isUltra ? "Split: 2 in-race doses\nat 30% and 60% of race time" : "Take 45–60 min pre-race"}\nGrgic et al. (2021) BJSM`} />
             </div>
+            {caffeineProduct !== NO_CAFFEINE && plan.caffeineTotal > 0 && plan.caffeineTotal >= plan.caffeineCeiling * 0.8 && (
+              <div style={{ background: "var(--caveat-bg)", border: "1px solid var(--warn-label)", borderRadius: 10, padding: "10px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 14, lineHeight: 1.4 }}>⚠️</span>
+                <div style={{ fontFamily: "monospace", fontSize: 11, color: "var(--text-dim)", lineHeight: 1.6 }}>
+                  <strong style={{ color: "var(--warn-label)" }}>Caffeine approaching safety ceiling.</strong>{" "}
+                  {plan.caffeineDoses}× {caffeineProduct} = {plan.caffeineTotal}mg total
+                  {" "}({Math.round(plan.caffeineTotal / bodyWeightKg * 10) / 10} mg/kg).
+                  {" "}Impairment reported above {plan.caffeineCeiling}mg ({Math.round(bodyWeightKg * 9 / bodyWeightKg)} mg/kg × {bodyWeightKg}kg).
+                  {" "}Consider a lower-caffeine product.
+                </div>
+              </div>
+            )}
 
             {/* Ultra: fat & protein */}
             {plan.isUltra && plan.durationH >= 5 && (
