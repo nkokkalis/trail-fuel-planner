@@ -774,13 +774,19 @@ export default function FuelPlanner() {
     };
   };
 
+  const onWeatherSuccess = (w) => {
+    setWeather(w);
+    Sentry.setTag("weather_fetched", "true");
+    Sentry.addBreadcrumb({ category: "weather", message: `Fetched: ${w.location}, ${w.temp}°C, ${w.humidity}% humidity`, level: "info" });
+  };
+
   const fetchWeather = () => {
     Sentry.addBreadcrumb({ category: "weather", message: "Weather fetch triggered", level: "info" });
     setWeatherLoading(true);
     setWeatherError(null);
     if (gpxFile?.startLat != null) {
       fetchWeatherAt(gpxFile.startLat, gpxFile.startLon)
-        .then(w => { setWeather(w); Sentry.setTag("weather_fetched", "true"); })
+        .then(onWeatherSuccess)
         .catch(() => setWeatherError("Could not fetch forecast."))
         .finally(() => setWeatherLoading(false));
       return;
@@ -792,7 +798,7 @@ export default function FuelPlanner() {
     }
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
-        try { const w = await fetchWeatherAt(coords.latitude, coords.longitude); setWeather(w); Sentry.setTag("weather_fetched", "true"); }
+        try { onWeatherSuccess(await fetchWeatherAt(coords.latitude, coords.longitude)); }
         catch { setWeatherError("Could not fetch forecast."); }
         finally { setWeatherLoading(false); }
       },
