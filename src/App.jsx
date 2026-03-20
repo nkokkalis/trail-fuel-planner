@@ -105,7 +105,7 @@ const AID_STATION_STRATEGY = {
       { name: "Rice Cake",         note: "Savory option, sustained energy" },
       { name: "Pretzels (30g)",    note: "Sodium + CHO combo" },
       { name: "Medjool Dates (3)", note: "Dense natural CHO" },
-      { name: "Tailwind (1 scoop)",note: "CHO + electrolytes in one" },
+      { name: "Tailwind (1 scoop)",note: "Mix with ~500ml water at aid station — CHO + electrolytes" },
     ],
   },
   medium: {
@@ -485,6 +485,30 @@ function Divider({ label }) {
 }
 
 function NumberInput({ label, value, onChange, unit, min, max, step = 1, helpText }) {
+  const [raw, setRaw] = useState(String(value));
+  const lastExternal = useRef(value);
+
+  useEffect(() => {
+    if (lastExternal.current !== value) {
+      setRaw(String(value));
+    }
+    lastExternal.current = value;
+  }, [value]);
+
+  const handleChange = (e) => {
+    setRaw(e.target.value);
+    const n = Number(e.target.value);
+    if (e.target.value !== "" && !isNaN(n)) onChange(n);
+  };
+
+  const handleBlur = () => {
+    const n = Number(raw);
+    if (raw === "" || isNaN(n)) { setRaw(String(value)); return; }
+    const clamped = Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n));
+    onChange(clamped);
+    setRaw(String(clamped));
+  };
+
   return (
     <div>
       <label style={{ display: "block", fontFamily: "'JetBrains Mono', monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-label)", marginBottom: 5 }}>
@@ -493,8 +517,9 @@ function NumberInput({ label, value, onChange, unit, min, max, step = 1, helpTex
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <input
           type="number"
-          value={value}
-          onChange={e => onChange(Number(e.target.value))}
+          value={raw}
+          onChange={handleChange}
+          onBlur={handleBlur}
           min={min} max={max} step={step}
           style={{
             background: "var(--input-bg)", border: "1px solid var(--input-border)",
