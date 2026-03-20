@@ -40,7 +40,6 @@ const SODIUM_MG_PER_L_SWEAT = 800;       // population mid-range; range 200–20
 const SPORT_CONFIG = {
   Road:  { terrainMult: 1.0,  paceAdj: 0.0, desc: "Paved roads — no terrain penalty" },
   Trail: { terrainMult: 1.12, paceAdj: 1.0, desc: "Mountain & singletrack — +12% energy, +1.0 min/km" },
-  Ultra: { terrainMult: 1.12, paceAdj: 1.0, desc: ">5h events — fat & protein planning included" },
 };
 
 // ─── PRODUCTS ─────────────────────────────────────────────────────────
@@ -188,7 +187,9 @@ function computePlan(inputs) {
   } = inputs;
 
   const cfg = SPORT_CONFIG[sportType] || SPORT_CONFIG.Trail;
-  const isUltra = sportType === "Ultra";
+  // Ultra auto-detection: road > 42 km, or trail by ITRA effort-distance (km + elevGain/100) > 42
+  const effortDistanceKm = distanceKm + (sportType === "Trail" ? elevationGainM / 100 : 0);
+  const isUltra = effortDistanceKm > 42;
 
   const elevationPaceAdj = (elevationGainM / 100) * 1.0 / distanceKm;
   const effectivePace = flatPaceMinPerKm + elevationPaceAdj + cfg.paceAdj;
@@ -282,6 +283,26 @@ function computePlan(inputs) {
       timeline.push({ time: raceMin, label: `${itemLabel} #${i + 1}`, detail: `1× ${fuelProduct} (~km ${km})`, type: "fuel", km });
     }
   }
+  // ── Real food at aid stations (ultra only) ──
+  // One real food item per hour from the aidTier food list, cycling, starting at 60 min
+  let realFoodTotalCho = 0, realFoodTotalProtein = 0, realFoodTotalKcal = 0;
+  if (isUltra && durationH >= 5) {
+    const aidFoods = AID_STATION_STRATEGY[aidTier].foods;
+    let foodIdx = 0;
+    for (let t = 60; t < durationMin - 20; t += 60) {
+      const foodEntry = aidFoods[foodIdx % aidFoods.length];
+      const p = PRODUCTS[foodEntry.name];
+      if (p) {
+        realFoodTotalCho      += p.cho;
+        realFoodTotalProtein  += p.protein;
+        realFoodTotalKcal     += p.kcal;
+        const km = Math.round(t / effectivePace * 10) / 10;
+        timeline.push({ time: t, label: "Aid Station", detail: `${foodEntry.name} — ${foodEntry.note}`, type: "food", km });
+      }
+      foodIdx++;
+    }
+  }
+
   timeline.push({
     time: Math.round(durationMin) + 10, label: "Recovery",
     detail: `${Math.round(bodyWeightKg)}g CHO + ${isUltra ? "30–40" : "20–25"}g protein within 30 min`,
@@ -300,7 +321,8 @@ function computePlan(inputs) {
     choPerHourTarget, choPerHourLow: tier.low, choPerHourHigh: tier.high, tierNote: tier.note,
     totalChoNeeded, sweatRateMlPerH, totalFluidL, sodiumPerH, totalSodium,
     caffeineLow, caffeineHigh, numGels, gelIntervalMin, timeline, fuelProduct,
-    isUltra, fatFractionOfEnergy, fatGPerH, proteinGPerH, totalProteinG, totalFatG, aidTier,
+    isUltra, effortDistanceKm, fatFractionOfEnergy, fatGPerH, proteinGPerH, totalProteinG, totalFatG, aidTier,
+    realFoodTotalCho, realFoodTotalProtein, realFoodTotalKcal,
     cfg,
   };
 }
@@ -612,7 +634,7 @@ function StatCard({ label, value, unit, warn, accent, formula }) {
 }
 
 function TimelineItem({ item, isLast }) {
-  const dotColor = { meal: "var(--text-dim)", fuel: "var(--accent)", caffeine: "var(--warn-label)", recovery: "var(--text-dim)" }[item.type] || "var(--text-dim)";
+  const dotColor = { meal: "var(--text-dim)", fuel: "var(--accent)", caffeine: "var(--warn-label)", recovery: "var(--text-dim)", food: "var(--ultra-text)" }[item.type] || "var(--text-dim)";
   const timeLabel = item.time < 0 ? `${item.time}m` : item.time > 200 ? "Post" : `+${item.time}m`;
 
   return (
@@ -786,7 +808,7 @@ export default function FuelPlanner() {
             Fuel Planner
           </div>
           <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "var(--header-sub)", marginTop: 6, letterSpacing: "0.12em" }}>
-            ROAD · TRAIL · ULTRA · SCIENCE-BASED
+            ROAD · TRAIL · SCIENCE-BASED
           </div>
         </div>
         <button
@@ -809,7 +831,7 @@ export default function FuelPlanner() {
 
           {/* Sport selector */}
           <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
-            {["Road", "Trail", "Ultra"].map(s => (
+            {["Road", "Trail"].map(s => (
               <button
                 key={s}
                 onClick={() => setSportType(s)}
@@ -830,8 +852,13 @@ export default function FuelPlanner() {
             ))}
           </div>
           {sportType !== "Road" && (
-            <div style={{ fontFamily: "monospace", fontSize: 11, color: "var(--text-muted)", marginTop: -12, marginBottom: 16 }}>
+            <div style={{ fontFamily: "monospace", fontSize: 11, color: "var(--text-muted)", marginTop: -12, marginBottom: plan.isUltra ? 8 : 16 }}>
               {SPORT_CONFIG[sportType].desc}
+            </div>
+          )}
+          {plan.isUltra && (
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--ultra-text)", background: "var(--ultra-bg)", border: "1px solid var(--ultra-border)", borderRadius: 6, padding: "5px 10px", marginBottom: 16 }}>
+              Ultra detected ({sportType === "Trail" ? `${Math.round(plan.effortDistanceKm)} km effort-distance` : `${distanceKm} km`}) — fat, protein & aid station planning enabled
             </div>
           )}
 
@@ -997,7 +1024,8 @@ export default function FuelPlanner() {
 
             {/* Execution stats */}
             <div className="grid-4">
-              <StatCard label="In-Race CHO" value={plan.totalChoNeeded} unit="g total" />
+              <StatCard label="In-Race CHO" value={plan.isUltra ? plan.totalChoNeeded + Math.round(plan.realFoodTotalCho) : plan.totalChoNeeded} unit="g total"
+                formula={plan.isUltra ? `${plan.totalChoNeeded}g from gels\n+${Math.round(plan.realFoodTotalCho)}g from aid station food\n= ${plan.totalChoNeeded + Math.round(plan.realFoodTotalCho)}g total` : undefined} />
               <StatCard label="Fluid" value={plan.sweatRateMlPerH} unit="ml/h"
                 formula={`Base 600 ml/h @ 15°C (Sawka 2007)\n+${Math.max(0, tempC - 15)}°C × 25 ml/h${humidityPct > 70 ? `\n× 1.15 humidity` : ""}${isHot ? `\n× 1.10 heat` : ""}\n= ${plan.sweatRateMlPerH} ml/h → ${plan.totalFluidL}L total\n\nIndividual variation ±50%.`} />
               <StatCard label="Sodium" value={plan.sodiumPerH} unit="mg/h"
@@ -1043,6 +1071,13 @@ export default function FuelPlanner() {
                   <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, color: "var(--text)", fontWeight: 600 }}>{plan.totalFluidL}L</div>
                   <div style={{ fontFamily: "monospace", fontSize: 11, color: "var(--text-dim)", marginTop: 3 }}>{plan.sweatRateMlPerH} ml/h · {plan.sodiumPerH} mg Na/h</div>
                 </div>
+                {plan.isUltra && (
+                  <div>
+                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "var(--ultra-text)", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 7 }}>Aid Station Food</div>
+                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, color: "var(--ultra-text)", fontWeight: 600 }}>{Math.round(plan.realFoodTotalCho)}g CHO</div>
+                    <div style={{ fontFamily: "monospace", fontSize: 11, color: "var(--text-dim)", marginTop: 3 }}>+{Math.round(plan.realFoodTotalProtein)}g pro · {Math.round(plan.realFoodTotalKcal)} kcal</div>
+                  </div>
+                )}
               </div>
             </div>
 
