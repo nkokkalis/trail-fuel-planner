@@ -1,18 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
-import { sentryVitePlugin } from "@sentry/vite-plugin";
 
 export default defineConfig({
   plugins: [
     react(),
-    sentryVitePlugin({
-      org: process.env.SENTRY_ORG,
-      project: process.env.SENTRY_PROJECT,
-      authToken: process.env.SENTRY_AUTH_TOKEN,
-      disable: !process.env.SENTRY_AUTH_TOKEN,  // skip silently if not configured
-    }),
-    VitePWA({
+VitePWA({
       registerType: "autoUpdate",
       workbox: {
         runtimeCaching: [
@@ -41,7 +34,4 @@ export default defineConfig({
     }),
   ],
   base: "/trail-fuel-planner/",
-  build: {
-    sourcemap: "hidden",  // generates source maps but doesn't link them in output (Sentry uploads them)
-  },
 });

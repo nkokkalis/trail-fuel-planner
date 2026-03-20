@@ -13,7 +13,6 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@sentry/vite-plugin": "^5.1.1",
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.2",
     "vite-plugin-pwa": "^1.2.0"
