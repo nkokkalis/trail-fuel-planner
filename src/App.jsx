@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
+import * as Sentry from "@sentry/react";
 
 // ─── SCIENCE-BASED CONSTANTS ──────────────────────────────────────────
 // - Margaria et al. (1963) J Appl Physiol 18(2):367-370 — 1 kcal/kg/km flat running
@@ -692,10 +693,31 @@ export default function FuelPlanner() {
   const [raceDate, setRaceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [raceHour, setRaceHour] = useState(8);
 
+  // ── Sentry: device/browser context (once on mount) ──
+  useEffect(() => {
+    Sentry.setContext("device", {
+      screen_width:  window.screen.width,
+      screen_height: window.screen.height,
+      pixel_ratio:   window.devicePixelRatio,
+      pointer_type:  window.matchMedia("(pointer: coarse)").matches ? "touch" : "mouse",
+      display_mode:  window.matchMedia("(display-mode: standalone)").matches ? "pwa" : "browser",
+    });
+    const nav = navigator.connection ?? navigator.mozConnection ?? navigator.webkitConnection;
+    if (nav) Sentry.setContext("network", { effective_type: nav.effectiveType, downlink_mbps: nav.downlink });
+    Sentry.setTag("locale",       navigator.language);
+    Sentry.setTag("color_scheme", window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  }, []);
+
   const plan = useMemo(() => computePlan({
     sportType, distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm,
     tempC, humidityPct, isHot, fuelProduct, caffeineProduct,
   }), [sportType, distanceKm, elevationGainM, bodyWeightKg, flatPaceMinPerKm, tempC, humidityPct, fuelProduct, caffeineProduct]);
+
+  // ── Sentry: app usage tags ──
+  useEffect(() => {
+    Sentry.setTag("sport_type", sportType);
+    Sentry.setTag("is_ultra",   String(plan.isUltra));
+  }, [sportType, plan.isUltra]);
 
   // ── GPX handler ──
   const handleGpxUpload = (e) => {
@@ -709,6 +731,8 @@ export default function FuelPlanner() {
         setGpxFile({ name: file.name, ...parsed });
         setDistanceKm(parsed.distanceKm);
         setElevationGainM(parsed.elevationGainM);
+        Sentry.setTag("gpx_used", "true");
+        Sentry.addBreadcrumb({ category: "gpx", message: `Uploaded: ${file.name} — ${parsed.distanceKm}km, +${parsed.elevationGainM}m`, level: "info" });
       } catch (err) {
         setGpxError(err.message);
       }
@@ -751,11 +775,12 @@ export default function FuelPlanner() {
   };
 
   const fetchWeather = () => {
+    Sentry.addBreadcrumb({ category: "weather", message: "Weather fetch triggered", level: "info" });
     setWeatherLoading(true);
     setWeatherError(null);
     if (gpxFile?.startLat != null) {
       fetchWeatherAt(gpxFile.startLat, gpxFile.startLon)
-        .then(setWeather)
+        .then(w => { setWeather(w); Sentry.setTag("weather_fetched", "true"); })
         .catch(() => setWeatherError("Could not fetch forecast."))
         .finally(() => setWeatherLoading(false));
       return;
@@ -767,7 +792,7 @@ export default function FuelPlanner() {
     }
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
-        try { setWeather(await fetchWeatherAt(coords.latitude, coords.longitude)); }
+        try { const w = await fetchWeatherAt(coords.latitude, coords.longitude); setWeather(w); Sentry.setTag("weather_fetched", "true"); }
         catch { setWeatherError("Could not fetch forecast."); }
         finally { setWeatherLoading(false); }
       },
