@@ -230,6 +230,9 @@ function computePlan(inputs) {
   const sodiumPerH = Math.round((sweatRateMlPerH / 1000) * SODIUM_MG_PER_L_SWEAT);
   const totalSodium = Math.round(sodiumPerH * durationH);
 
+  const product = PRODUCTS[fuelProduct];
+  const cafProduct = caffeineProduct !== NO_CAFFEINE ? PRODUCTS[caffeineProduct] : null;
+
   const caffeineLow = Math.round(bodyWeightKg * 3);
   const caffeineHigh = Math.round(bodyWeightKg * 6);
   const caffeineCeiling = Math.round(bodyWeightKg * 9); // impairment threshold (Fellrnr; consistent with ISSN upper bound)
@@ -251,8 +254,6 @@ function computePlan(inputs) {
 
   const aidTier = durationH < 8 ? "short" : durationH < 16 ? "medium" : "long";
 
-  const product = PRODUCTS[fuelProduct];
-  const cafProduct = caffeineProduct !== NO_CAFFEINE ? PRODUCTS[caffeineProduct] : null;
   const numGels = Math.ceil(totalChoNeeded / product.cho);
   const gelIntervalMin = numGels > 1 ? Math.round(fuelingDurationH * 60 / numGels) : null;
 
